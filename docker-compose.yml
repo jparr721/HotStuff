@@ -1,0 +1,28 @@
+version: "3"
+services:
+  node0:
+   image: hotstuff
+   restart: always
+   ports:
+    - "2000:2000"
+   networks:
+    stuffnet:
+     ipv4_address: 172.20.0.2
+
+  node1:
+   image: hotstuff
+   restart: always
+   ports:
+    - "2001:2000"
+   networks:
+    stuffnet:
+     ipv4_address: 172.20.0.3
+
+networks:
+  stuffnet:
+   driver: bridge
+   ipam:
+    driver: default
+    config:
+      - subnet: 172.20.0.0/16
+

@@ -1,14 +1,15 @@
 use anyhow::Context;
 use futures::future::join_all;
+use futures::Future;
 use rand::seq::IteratorRandom;
 use std::sync::{Arc, Mutex};
 use std::{collections::HashMap, time::Duration};
 use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::mpsc::Receiver;
 
 use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
-use tokio_util::codec::{Decoder, Encoder, Framed};
 
 use crate::block::Block;
 
@@ -55,6 +56,9 @@ pub struct Node {
 
     /// The TCP listener for the node
     pub listener: TcpListener,
+
+    /// Termination handler
+    shutdown_rx: tokio::sync::mpsc::Receiver<()>,
 }
 
 impl Node {
@@ -62,6 +66,7 @@ impl Node {
         id: String,
         port: usize,
         peers: Option<HashMap<String, usize>>,
+        shutdown_rx: Receiver<()>,
     ) -> anyhow::Result<Self> {
         // TODO change this to be a real block
         // Make the genesis block.
@@ -74,23 +79,13 @@ impl Node {
 
         info!("Node {} bound on {}", id, ip_addr);
 
-        Ok(Self {
-            b_lock: b0.clone(),
-            b_exec: b0.clone(),
-            b0,
-            id,
-            peers,
-            peer_cxns: Arc::new(Mutex::new(vec![])),
-            listener,
-        })
-    }
+        info!("Node {} connecting to peer nodes", id);
 
-    pub async fn run(&mut self) -> anyhow::Result<()> {
         let mut rng = rand::thread_rng();
         // TODO handle node init failures and re-fetch from the map.
-        self.peer_cxns = Arc::new(Mutex::new(
+        let peer_cxns = Arc::new(Mutex::new(
             join_all(
-                self.peers
+                peers
                     .lock()
                     .unwrap()
                     .iter()
@@ -110,10 +105,17 @@ impl Node {
 
                                 // If we've exceeded our maximum configured number of retries, then return `None`.
                                 if retries >= MAX_RETRY_TIMES {
-                                    error!("Node {}:{} failed to connect", ip, port);
+                                    error!(
+                                        "Node {}:{} failed to connect, exiting; error = {:?}",
+                                        ip,
+                                        port,
+                                        stream.err().unwrap()
+                                    );
                                     // TODO don't let this happen. Instead, try a different IP address and use that. If we've
                                     // exhausted our pool, log an error and move on.
                                     return None;
+                                } else {
+                                    error!("Node {}:{} failed to connect, retrying", ip, port);
                                 }
                             } else {
                                 // We can be reasonably sure that this unwrap will go successfully since we've
@@ -130,27 +132,51 @@ impl Node {
             .await,
         ));
 
-        loop {
-            match self.listener.accept().await {
-                Ok((mut stream, _)) => {
-                    // Grab a reference to listen for updates
-                    let peer_cxns = self.peer_cxns.clone();
+        Ok(Self {
+            b_lock: b0.clone(),
+            b_exec: b0.clone(),
+            b0,
+            id,
+            peers,
+            peer_cxns,
+            listener,
+            shutdown_rx,
+        })
+    }
 
-                    tokio::spawn(async move {
-                        let mut buffer = Vec::new();
-                        match stream.read_to_end(&mut buffer).await {
-                            Ok(_) => match bincode::deserialize::<Message>(&buffer) {
-                                Ok(data) => {
-                                    debug!("Got data {:?}", data);
-                                }
-                                Err(e) => error!("Failed to deserialize message; error = {:?}", e),
-                            },
-                            Err(e) => error!("Failed to read data from socket; error = {:?}", e),
-                        };
-                    });
+    pub async fn run(&mut self) -> anyhow::Result<()> {
+        loop {
+            let accept_future = self.listener.accept();
+            tokio::select! {
+                accept_res = accept_future => {
+                    match accept_res {
+                        // TODO handle processing in a different function.
+                        Ok((mut stream, _)) => {
+                            // Grab a reference to listen for updates
+                            let peer_cxns = self.peer_cxns.clone();
+
+                            tokio::spawn(async move {
+                                let mut buffer = Vec::new();
+                                match stream.read_to_end(&mut buffer).await {
+                                    Ok(_) => match bincode::deserialize::<Message>(&buffer) {
+                                        Ok(data) => {
+                                            debug!("Got data {:?}", data);
+                                        }
+                                        Err(e) => error!("Failed to deserialize message; error = {:?}", e),
+                                    },
+                                    Err(e) => error!("Failed to read data from socket; error = {:?}", e),
+                                };
+                            });
+                        }
+                        Err(e) => error!("Error accepting socket; error = {:?}", e),
+                    }
                 }
-                Err(e) => error!("Error accepting socket; error = {:?}", e),
+                _ = self.shutdown_rx.recv() => {
+                    break;
+                }
             }
         }
+
+        Ok(())
     }
 }
