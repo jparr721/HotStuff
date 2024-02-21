@@ -1,0 +1,22 @@
+[package]
+name = "hotstuff"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "hotstuff-server"
+path = "src/bin/server.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+bincode = { workspace = true }
+digest = { workspace = true }
+env_logger = { workspace = true }
+futures = { workspace = true }
+log = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true }
+sha2 = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+uuid = { workspace = true }
