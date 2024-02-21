@@ -1,15 +1,15 @@
-use anyhow::Context;
-use futures::future::join_all;
-use futures::Future;
-use rand::seq::IteratorRandom;
-use std::sync::{Arc, Mutex};
 use std::{collections::HashMap, time::Duration};
+use std::sync::{Arc, Mutex};
+
+use anyhow::Context;
+use futures::Future;
+use futures::future::join_all;
+use log::{debug, error, info};
+use rand::seq::IteratorRandom;
+use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::Receiver;
-
-use log::{debug, error, info};
-use serde::{Deserialize, Serialize};
 
 use crate::block::Block;
 
@@ -122,14 +122,14 @@ impl Node {
                                 // already checked the error. If this somehow does not work,
                                 // then we know something terible has happened.
                                 return Some(stream.context(
-                                "Something went horribly wrong acquiring the TCP connection",
-                            ).unwrap());
+                                    "Something went horribly wrong acquiring the TCP connection",
+                                ).unwrap());
                             }
                         }
                     })
                     .collect::<Vec<_>>(),
             )
-            .await,
+                .await,
         ));
 
         Ok(Self {
@@ -159,8 +159,15 @@ impl Node {
                                 let mut buffer = Vec::new();
                                 match stream.read_to_end(&mut buffer).await {
                                     Ok(_) => match bincode::deserialize::<Message>(&buffer) {
-                                        Ok(data) => {
-                                            debug!("Got data {:?}", data);
+                                        Ok(message) => {
+                                            match message {
+                                                Message::Hello(hello_message) => {
+                                                    info!("Got hello message {:?}", hello_message);
+                                                },
+                                                Message::NewPeers(new_peers_message) => {
+                                                    info!("Got new peer message {:?}", new_peers_message);
+                                                },
+                                            }
                                         }
                                         Err(e) => error!("Failed to deserialize message; error = {:?}", e),
                                     },
