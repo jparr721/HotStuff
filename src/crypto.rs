@@ -1,15 +1,15 @@
-use serde::de::{self, Visitor};
 use serde::{Deserialize, Serialize};
-use sha2::Digest as Sha2Digest;
+use serde::de::{self, Visitor};
 use sha2::{self, Sha256};
+use sha2::Digest as Sha2Digest;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct Digest(pub digest::Output<sha2::Sha256>);
+pub struct Digest(pub digest::Output<Sha256>);
 
 impl<'de> Deserialize<'de> for Digest {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
+        where
+            D: serde::Deserializer<'de>,
     {
         struct DigestVisitor;
         impl<'de> Visitor<'de> for DigestVisitor {
@@ -20,8 +20,8 @@ impl<'de> Deserialize<'de> for Digest {
             }
 
             fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
-            where
-                E: de::Error,
+                where
+                    E: de::Error,
             {
                 Ok(Vec::from(v))
             }
@@ -36,8 +36,8 @@ impl<'de> Deserialize<'de> for Digest {
 
 impl Serialize for Digest {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
+        where
+            S: serde::Serializer,
     {
         serializer.serialize_bytes(&self.0)
     }
@@ -54,13 +54,13 @@ impl std::fmt::Debug for Digest {
 }
 
 pub fn zero_digest() -> Digest {
-    Digest(*digest::Output::<sha2::Sha256>::from_slice(
+    Digest(*digest::Output::<Sha256>::from_slice(
         &vec![0u8; sha2::Sha256::output_size()],
     ))
 }
 
-impl From<digest::Output<sha2::Sha256>> for Digest {
-    fn from(d: digest::Output<sha2::Sha256>) -> Self {
+impl From<digest::Output<Sha256>> for Digest {
+    fn from(d: digest::Output<Sha256>) -> Self {
         Self(d)
     }
 }
@@ -72,8 +72,8 @@ impl AsRef<[u8]> for Digest {
 }
 
 pub fn hash_one_thing<T1>(label1: &str, v1: T1) -> Digest
-where
-    T1: AsRef<[u8]>,
+    where
+        T1: AsRef<[u8]>,
 {
     let mut hasher = sha2::Sha256::new();
     hasher.update(b"hash_one_thing");
