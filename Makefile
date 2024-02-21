@@ -9,7 +9,7 @@ test:
 docker_build:
 	docker build --rm -f docker/node.Dockerfile -t hotstuff .
 docker:
-	docker-compose up
+	docker-compose up -d
 docker_all:
 	$(MAKE) docker_build
 	$(MAKE) docker
