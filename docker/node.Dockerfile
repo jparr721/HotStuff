@@ -12,7 +12,7 @@ RUN cargo build --release
 FROM debian:bookworm
 
 # Copy the binary from the builder stage
-COPY --from=builder /hotstuff/target/release/hotstuff /usr/local/bin/hotstuff
+COPY --from=builder /hotstuff/target/release/hotstuff-server /usr/local/bin/hotstuff-server
 
 # Startup command runs the node
-CMD ["hotstuff"]
+CMD ["hotstuff-server"]
