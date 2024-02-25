@@ -17,6 +17,7 @@ impl Test for SimpleMessage {
         let ds = TestDistributedSystem::new(n_nodes)?;
         ds.init()?;
         info!("Done initializing, ready to begin testing");
+
         Ok(())
     }
 }

@@ -1,15 +1,15 @@
 use std::{collections::HashMap, time::Duration};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use anyhow::Context;
-use futures::Future;
 use futures::future::join_all;
-use log::{debug, error, info};
+use log::{error, info};
 use rand::seq::IteratorRandom;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::Receiver;
+use tokio::sync::Mutex;
 
 use crate::block::Block;
 
@@ -58,7 +58,7 @@ pub struct Node {
     pub listener: TcpListener,
 
     /// Termination handler
-    shutdown_rx: tokio::sync::mpsc::Receiver<()>,
+    shutdown_rx: Receiver<()>,
 }
 
 impl Node {
@@ -75,7 +75,7 @@ impl Node {
         let ip_addr = format!("0.0.0.0:{}", port);
         let listener = TcpListener::bind(&ip_addr).await?;
 
-        let peers = Arc::new(Mutex::new(peers.unwrap_or(HashMap::new())));
+        let peers = Arc::new(Mutex::new(peers.unwrap_or_default()));
 
         info!("Node {} bound on {}", id, ip_addr);
 
@@ -87,7 +87,7 @@ impl Node {
             join_all(
                 peers
                     .lock()
-                    .unwrap()
+                    .await
                     .iter()
                     .choose_multiple(&mut rng, MAX_NUM_PEERS)
                     .into_iter()
@@ -129,7 +129,7 @@ impl Node {
                     })
                     .collect::<Vec<_>>(),
             )
-                .await,
+            .await,
         ));
 
         Ok(Self {
@@ -153,7 +153,7 @@ impl Node {
                         // TODO handle processing in a different function.
                         Ok((mut stream, _)) => {
                             // Grab a reference to listen for updates
-                            let peer_cxns = self.peer_cxns.clone();
+                            let _peer_cxns = self.peer_cxns.clone();
 
                             tokio::spawn(async move {
                                 let mut buffer = Vec::new();
