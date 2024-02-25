@@ -44,12 +44,8 @@ impl TestDistributedSystem {
             .unwrap();
 
         if !output.status.success() {
-            error!(
-                "Failed to build hotstuff docker: {}",
-                std::str::from_utf8(&output.stderr).unwrap()
-            );
-            return bail!(
-                "Failed to build hotstuff docker: {}",
+            bail!(
+                "Failed to build hotstuff docker image; error={}",
                 std::str::from_utf8(&output.stderr).unwrap()
             );
         }
@@ -63,8 +59,8 @@ impl TestDistributedSystem {
             .output()
             .unwrap();
         if !output.status.success() {
-            return bail!(
-                "Failed to build docker-compose: {}",
+            bail!(
+                "Failed to build docker-compose; error={}",
                 std::str::from_utf8(&output.stderr).unwrap()
             );
         }
@@ -81,7 +77,8 @@ impl Drop for TestDistributedSystem {
             .unwrap();
         if !output.status.success() {
             error!(
-                "error removing hotstuff cluster; error={} leaving docker files around for manual cleanup",
+                "error removing hotstuff cluster, leaving docker files around for manual cleanup; \
+                error={}",
                 std::str::from_utf8(&output.stderr).unwrap()
             );
         } else {
