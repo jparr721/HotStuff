@@ -11,15 +11,18 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize)]
 struct DockerComposeService {
     image: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    command: Option<Vec<String>>,
     restart: String,
     ports: Vec<String>,
     networks: HashMap<String, NetworkConfig>,
 }
 
 impl DockerComposeService {
-    pub fn new(port_mapping: String, ip_addr: String) -> Self {
+    pub fn new(port_mapping: String, ip_addr: String, command: Option<Vec<String>>) -> Self {
         Self {
             image: "hotstuff".to_string(),
+            command,
             restart: "always".to_string(),
             ports: vec![port_mapping],
             networks: HashMap::from([("stuffnet".to_string(), NetworkConfig::new(ip_addr))]),
@@ -56,6 +59,11 @@ impl DockerCompose {
                         DockerComposeService::new(
                             format!("{}:2000", 2000 + ii),
                             format!("172.20.0.{}", ii + 2),
+                            // Mark node 0 as a bootnode, otherwise don't send any other options.
+                            match ii {
+                                0 => Some(vec!["--is-bootnode".to_string()]),
+                                _ => None,
+                            },
                         ),
                     )
                 })

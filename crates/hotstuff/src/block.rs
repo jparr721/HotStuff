@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::crypto::{Digest, zero_digest};
+use crate::crypto::{zero_digest, Digest};
 
 #[derive(Debug, Clone)]
 pub struct Transaction {}
