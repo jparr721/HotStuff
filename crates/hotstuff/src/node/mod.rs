@@ -1,10 +1,13 @@
 use std::collections::HashMap;
+use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Error, Result};
 use futures::future::join_all;
+use futures::SinkExt;
+use http::{Request, Response};
 use log::{debug, error, info};
 use serde::Serialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -13,11 +16,14 @@ use tokio::sync::mpsc::Receiver;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time;
+use tokio_stream::StreamExt;
+use tokio_util::codec::Framed;
 
 use crate::async_helpers::{
     connect_valid_subset_ip_range, send_request_with_timeout, try_connect_with_retry,
 };
 use crate::block::Block;
+use crate::http::{read, Http};
 use crate::node::config::HotStuffConfig;
 use crate::node::message::{HelloMessage, HelloResponseMessage, Message};
 
@@ -157,27 +163,30 @@ impl Node {
                 },
                 accept_res = accept_future => {
                     match accept_res {
-                        Ok((mut stream, peer_ip)) => {
+                        Ok((stream, _)) => {
                             let storage = self.storage.clone();
 
                             self.tasks.push(tokio::spawn(async move {
-                                // TODO BUG BUG BUG BUG BUG
-                                // This CANNOT handle messages > 4096 and creates a whole mess.
-                                // We need to handle larger messages using something like HTTP.
-                                let mut buffer = [0; 4096];
-                                let mut storage_guard = storage.lock().await;
-
-                                // TODO merge this into a helper function.
-                                match stream.read(&mut buffer[..]).await {
-                                    Ok(n) => match serde_json::from_slice::<Message>(&buffer[0..n]) {
-                                        Ok(message) => if let Err(e) = Node::handle_message(
-                                            &mut stream, message, &mut storage_guard).await {
-                                            error!("Failed to process message; error = {:?}", e);
-                                        },
-                                        Err(e) => error!("Failed to deserialize message; error = {:?}; got = {}", e, String::from_utf8_lossy(&buffer)),
-                                    },
-                                    Err(e) => error!("Failed to read data from socket; error = {:?}", e),
-                                };
+                                if let Err(e) = read(stream).await {
+                                    error!("Failed to process input stream; error = {}", e);
+                                }
+                            //     // TODO BUG BUG BUG BUG BUG
+                            //     // This CANNOT handle messages > 4096 and creates a whole mess.
+                            //     // We need to handle larger messages using something like HTTP.
+                            //     let mut buffer = [0; 4096];
+                            //     let mut storage_guard = storage.lock().await;
+                            //
+                            //     // TODO merge this into a helper function.
+                            //     match stream.read(&mut buffer[..]).await {
+                            //         Ok(n) => match serde_json::from_slice::<Message>(&buffer[0..n]) {
+                            //             Ok(message) => if let Err(e) = Node::handle_message(
+                            //                 &mut stream, message, &mut storage_guard).await {
+                            //                 error!("Failed to process message; error = {:?}", e);
+                            //             },
+                            //             Err(e) => error!("Failed to deserialize message; error = {:?}; got = {}", e, String::from_utf8_lossy(&buffer)),
+                            //         },
+                            //         Err(e) => error!("Failed to read data from socket; error = {:?}", e),
+                            //     };
                             }));
                         }
                         Err(e) => error!("Error accepting socket; error = {:?}", e),
@@ -202,23 +211,50 @@ impl Node {
     ) -> Result<()> {
         info!("Requesting new peers list");
 
-        let stream = TcpStream::connect(format!(
+        let mut stream = TcpStream::connect(format!(
             "{}:{}",
             config.bootnode_ip_addr, config.bootnode_port
         ))
-            .await;
-        let mut stream = stream?;
-        let hello = HelloMessage::new(id, config.hotstuff_port);
-        let ser = serde_json::to_vec(&hello)?;
-        let response = send_request_with_timeout(&mut stream, &ser, None).await?;
-        let response = serde_json::from_slice::<HelloResponseMessage>(&response)?;
-        debug!("Response {}", response);
+        .await?;
 
-        info!("Got new peer list, updating local storage");
-        for (id, sock) in response.peer_list.into_iter() {
-            node_storage.update_peer(id, sock).await?;
+        let http_codec = Http::<Message>::new();
+        let mut transport = Framed::new(stream, http_codec);
+
+        let hello = Message::Hello(HelloMessage::new(id, config.hotstuff_port));
+        let request = Request::builder()
+            .method("POST")
+            .header("Content-Type", "application/json")
+            .body(hello)?;
+
+        transport.send(request).await?;
+
+        // Await the response
+        let response = transport.next().await;
+
+        match response {
+            Some(Ok(response)) => {
+                // Process the response here
+                info!("Received response: {:?}", response);
+            }
+            Some(Err(e)) => return Err(e), // Convert the error into your function's error type
+            None => {
+                // Handle the case where no response is received
+                error!("No response received from the server.");
+            }
         }
-        info!("Update occurred successfully");
+
+        // stream.write_all(&request).await?;
+
+        // let ser = serde_json::to_vec(&hello)?;
+        // let response = send_request_with_timeout(&mut stream, &ser, None).await?;
+        // let response = serde_json::from_slice::<HelloResponseMessage>(&response)?;
+        // debug!("Response {}", response);
+
+        // info!("Got new peer list, updating local storage");
+        // for (id, sock) in response.peer_list.into_iter() {
+        //     node_storage.update_peer(id, sock).await?;
+        // }
+        // info!("Update occurred successfully");
 
         Ok(())
     }

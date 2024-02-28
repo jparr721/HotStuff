@@ -39,3 +39,4 @@ async fn main() -> Result<()> {
     let args = HotStuffConfig::parse();
     run(args, tokio::signal::ctrl_c()).await
 }
+
