@@ -1,3 +1,5 @@
+use std::net::Ipv4Addr;
+
 use clap::Parser;
 
 #[derive(Debug, Clone, Parser)]
@@ -17,7 +19,7 @@ pub struct HotStuffConfig {
 
     /// The IP address of the bootnode.
     #[arg(long, default_value = "172.20.0.2")]
-    pub bootnode_ip_addr: String,
+    pub bootnode_ip_addr: Ipv4Addr,
 
     /// The port of the bootnode.
     #[arg(long, default_value_t = 2000)]
@@ -34,7 +36,7 @@ impl Default for HotStuffConfig {
             hotstuff_port: 2000,
             n_max_connections: 25,
             n_max_retries: 5,
-            bootnode_ip_addr: "172.20.0.2".to_string(),
+            bootnode_ip_addr: "172.20.0.2".parse().unwrap(),
             bootnode_port: 2000,
             is_bootnode: false,
         }
