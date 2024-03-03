@@ -1,16 +1,17 @@
 use std::collections::HashMap;
-use std::marker::PhantomData;
+
 use std::net::SocketAddr;
+
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Error, Result};
+use anyhow::{bail, Context, Error, Result};
 use futures::future::join_all;
 use futures::SinkExt;
-use http::{Request, Response};
+use http::{Request, Response, StatusCode};
 use log::{debug, error, info};
-use serde::Serialize;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::Mutex;
@@ -20,10 +21,10 @@ use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
 
 use crate::async_helpers::{
-    connect_valid_subset_ip_range, send_request_with_timeout, try_connect_with_retry,
+    connect_valid_subset_ip_range, try_connect_with_retry,
 };
 use crate::block::Block;
-use crate::http::{read, Http};
+use crate::http::Http;
 use crate::node::config::HotStuffConfig;
 use crate::node::message::{HelloMessage, HelloResponseMessage, Message};
 
@@ -56,12 +57,6 @@ impl NodeStorage {
             // Add the valid connection to the peer list for broadcast messaging
             self.peer_cxns.insert(id, sock);
         }
-
-        // If the value already existed _and_ it was the same as an already existing entry, notify
-        // that someone is pushing duplicates around.
-        // if prev_peer.is_some() && sock == prev_peer.unwrap() {
-        //     bail!("Attempted to insert a duplicate entry into the peers table.");
-        // }
 
         // Otherwise, we're good to go.
         Ok(())
@@ -163,30 +158,27 @@ impl Node {
                 },
                 accept_res = accept_future => {
                     match accept_res {
-                        Ok((stream, _)) => {
+                        Ok((stream, src)) => {
                             let storage = self.storage.clone();
-
+                            let http_codec = Http::<Message>::new();
+                            let mut transport = Framed::new(stream, http_codec);
                             self.tasks.push(tokio::spawn(async move {
-                                if let Err(e) = read(stream).await {
-                                    error!("Failed to process input stream; error = {}", e);
+                                let mut storage_guard = storage.lock().await;
+                                while let Some(packet) = transport.next().await {
+                                    match packet {
+                                        Ok(message) => match message {
+                                            crate::http::codec::HttpMessage::Request(req) => {
+                                                let message = req.into_body();
+                                                Node::handle_message(src, &mut transport, message, &mut storage_guard).await.unwrap()
+                                            }
+                                            crate::http::codec::HttpMessage::Response(res) => {
+                                                let message = res.into_body();
+                                                Node::handle_message(src, &mut transport, message, &mut storage_guard).await.unwrap()
+                                            },
+                                        },
+                                        Err(e) => error!("Failed to process request; error = {}", e),
+                                    }
                                 }
-                            //     // TODO BUG BUG BUG BUG BUG
-                            //     // This CANNOT handle messages > 4096 and creates a whole mess.
-                            //     // We need to handle larger messages using something like HTTP.
-                            //     let mut buffer = [0; 4096];
-                            //     let mut storage_guard = storage.lock().await;
-                            //
-                            //     // TODO merge this into a helper function.
-                            //     match stream.read(&mut buffer[..]).await {
-                            //         Ok(n) => match serde_json::from_slice::<Message>(&buffer[0..n]) {
-                            //             Ok(message) => if let Err(e) = Node::handle_message(
-                            //                 &mut stream, message, &mut storage_guard).await {
-                            //                 error!("Failed to process message; error = {:?}", e);
-                            //             },
-                            //             Err(e) => error!("Failed to deserialize message; error = {:?}; got = {}", e, String::from_utf8_lossy(&buffer)),
-                            //         },
-                            //         Err(e) => error!("Failed to read data from socket; error = {:?}", e),
-                            //     };
                             }));
                         }
                         Err(e) => error!("Error accepting socket; error = {:?}", e),
@@ -211,11 +203,13 @@ impl Node {
     ) -> Result<()> {
         info!("Requesting new peers list");
 
-        let mut stream = TcpStream::connect(format!(
-            "{}:{}",
-            config.bootnode_ip_addr, config.bootnode_port
-        ))
-        .await?;
+        let bootnode_ip_and_port = format!("{}:{}", config.bootnode_ip_addr, config.bootnode_port);
+        let dst_sock: SocketAddr = bootnode_ip_and_port.parse().context(format!(
+            "Creating socket address for bootnode {}",
+            bootnode_ip_and_port
+        ))?;
+
+        let stream = TcpStream::connect(dst_sock).await?;
 
         let http_codec = Http::<Message>::new();
         let mut transport = Framed::new(stream, http_codec);
@@ -233,62 +227,49 @@ impl Node {
 
         match response {
             Some(Ok(response)) => {
-                // Process the response here
-                info!("Received response: {:?}", response);
+                let response = response.into_response()?;
+                info!("Response received.");
+                Node::handle_message(dst_sock, &mut transport, response.into_body(), node_storage)
+                    .await
             }
-            Some(Err(e)) => return Err(e), // Convert the error into your function's error type
+            Some(Err(e)) => Err(e),
             None => {
                 // Handle the case where no response is received
-                error!("No response received from the server.");
+                bail!("No response received from the server.");
             }
         }
-
-        // stream.write_all(&request).await?;
-
-        // let ser = serde_json::to_vec(&hello)?;
-        // let response = send_request_with_timeout(&mut stream, &ser, None).await?;
-        // let response = serde_json::from_slice::<HelloResponseMessage>(&response)?;
-        // debug!("Response {}", response);
-
-        // info!("Got new peer list, updating local storage");
-        // for (id, sock) in response.peer_list.into_iter() {
-        //     node_storage.update_peer(id, sock).await?;
-        // }
-        // info!("Update occurred successfully");
-
-        Ok(())
     }
 
     async fn handle_message(
-        stream: &mut TcpStream,
+        src: SocketAddr,
+        transport: &mut Framed<TcpStream, Http<Message>>,
         message: Message,
         node_storage: &mut NodeStorage,
     ) -> Result<()> {
         debug!("Handling message; message = {}", message);
         match message {
             Message::Hello(hello_message) => {
-                let mut peer = stream.peer_addr()?;
-                peer.set_port(hello_message.port);
+                let mut src = src;
+                src.set_port(hello_message.port);
 
-                let update_result = node_storage.update_peer(hello_message.id, peer).await;
-                if update_result.is_err() {
-                    error!(
-                        "Error processing hello message; error = {:?}",
-                        update_result.err()
-                    );
-                }
+                // Update the peeer connection table.
+                node_storage.update_peer(hello_message.id, src).await?;
 
-                let response = HelloResponseMessage {
+                let resp_msg = HelloResponseMessage {
                     peer_list: node_storage.peers.clone(),
                 };
-                stream
-                    .write_all(&serde_json::to_vec(&response).unwrap())
-                    .await?;
-
-                Ok(())
+                let res = Response::builder()
+                    .header("Content-Type", "application/json")
+                    .status(StatusCode::OK)
+                    .body(Message::HelloResponse(resp_msg))
+                    .map_err(Error::from)?;
+                transport.send(res).await
             }
             Message::HelloResponse(hello_response_message) => {
                 info!("Updating local peer list.");
+                for (id, sock) in hello_response_message.peer_list.into_iter() {
+                    node_storage.update_peer(id, sock).await?;
+                }
                 Ok(())
             }
         }

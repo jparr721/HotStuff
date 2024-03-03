@@ -1,9 +1,7 @@
-use std::fmt::Display;
-
 use anyhow::{bail, Error, Result};
+use http::{HeaderMap, HeaderValue, Request, Response, StatusCode, Version};
 use http::request::Builder as RequestBuilder;
 use http::response::Builder as ResponseBuilder;
-use http::{HeaderMap, HeaderValue, Request, Response, StatusCode, Version};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use tokio_util::bytes::{Buf, BytesMut};
@@ -142,6 +140,8 @@ fn decode_request<T: Serialize + DeserializeOwned>(
 
         // Move beyond the buffer
         src.advance(src.len());
+
+        // This is likely overkill
         src.clear();
 
         Ok(Some(HttpMessage::Request(req)))
@@ -189,6 +189,8 @@ fn decode_response<T: Serialize + DeserializeOwned>(
 
         // Move beyond the buffer
         src.advance(src.len());
+
+        // This is likely overkill
         src.clear();
 
         Ok(Some(HttpMessage::Response(res)))
@@ -212,13 +214,33 @@ fn try_decode<T: Serialize + DeserializeOwned>(
 
 #[derive(Debug, Clone)]
 pub enum HttpMessage<T: Serialize + DeserializeOwned> {
-    Request(http::Request<T>),
-    Response(http::Response<T>),
+    Request(Request<T>),
+    Response(Response<T>),
+}
+
+impl<T: Serialize + DeserializeOwned> HttpMessage<T> {
+    /// Consumes the message and returns the value as a request, if it is one.
+    #[inline]
+    pub fn into_request(self) -> Result<Request<T>> {
+        match self {
+            HttpMessage::Request(req) => Ok(req),
+            HttpMessage::Response(_) => bail!("Not a request"),
+        }
+    }
+
+    /// Consumes the message and returns the value as a response, if it is one.
+    #[inline]
+    pub fn into_response(self) -> Result<Response<T>> {
+        match self {
+            HttpMessage::Request(_) => bail!("Not a response"),
+            HttpMessage::Response(res) => Ok(res),
+        }
+    }
 }
 
 impl<T: Serialize + DeserializeOwned> Decoder for Http<T> {
     type Item = HttpMessage<T>;
-    type Error = anyhow::Error;
+    type Error = Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         // If we cannot even encode a GET or POST or HTTP, wait for more data.
