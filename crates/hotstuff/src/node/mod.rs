@@ -1,7 +1,5 @@
 use std::collections::HashMap;
-
 use std::net::SocketAddr;
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -10,8 +8,6 @@ use futures::future::join_all;
 use futures::SinkExt;
 use http::{Request, Response, StatusCode};
 use log::{debug, error, info};
-
-
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::Mutex;
@@ -20,9 +16,7 @@ use tokio::time;
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
 
-use crate::async_helpers::{
-    connect_valid_subset_ip_range, try_connect_with_retry,
-};
+use crate::async_helpers::{connect_valid_subset_ip_range, try_connect_with_retry};
 use crate::block::Block;
 use crate::http::Http;
 use crate::node::config::HotStuffConfig;
@@ -252,7 +246,7 @@ impl Node {
                 let mut src = src;
                 src.set_port(hello_message.port);
 
-                // Update the peeer connection table.
+                // Update the peer connection table.
                 node_storage.update_peer(hello_message.id, src).await?;
 
                 let resp_msg = HelloResponseMessage {

@@ -2,13 +2,13 @@
 
 use std::process::Command;
 
-use anyhow::{anyhow, bail, Context, Error, Result};
+use anyhow::{bail, Context, Result};
 use log::{error, info};
-use serde_yaml;
 
 use crate::docker::{delete_dockerfiles, emit_docker_compose_file, emit_dockerfile};
 
 pub struct TestDistributedSystem {
+    #[allow(dead_code)]
     n_nodes: usize,
 }
 
@@ -28,6 +28,7 @@ impl TestDistributedSystem {
         self.start_distributed_system()
     }
 
+    #[allow(dead_code)]
     pub fn n_nodes(&self) -> usize {
         self.n_nodes
     }
