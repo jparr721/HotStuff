@@ -63,9 +63,8 @@ pub async fn try_connect_with_retry(
                     stream.err().unwrap()
                 );
                 bail!("Failed to connect to node.")
-            } else {
-                error!("Node {} failed to connect, retrying", sock);
             }
+            error!("Node {} failed to connect, retrying", sock);
         } else {
             // We can be reasonably sure that this unwrap will go successfully since we've
             // already checked the error. If this somehow does not work,
